@@ -21,16 +21,19 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+#define _POSIX_C_SOURCE 200809L		/* For pclose, popen, strdup */
+
+#include <errno.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <err.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <string.h>
+
+#ifdef _MSC_VER
+#define popen _popen
+#define pclose _pclose
+#endif
 
 #define DEFAULT_COMPILER "cc"
 #define DEFAULT_FLAGS "-g3 -ggdb -Wall -Wundef -Wmissing-prototypes -Wmissing-declarations -Wstrict-prototypes -Wold-style-definition"
@@ -367,20 +370,33 @@ static struct test tests[] = {
 	},
 };
 
-static char *grab_fd(int fd)
+static size_t fread_noeintr(void *restrict ptr, size_t size,
+		size_t nitems, FILE *restrict stream)
 {
-	int ret;
-	size_t max, size = 0;
+	size_t ret;
+
+	do {
+		errno = 0;
+		ret = fread(ptr, size, nitems, stream);
+	} while (ret == 0 && errno == EINTR);
+
+	return ret;
+}
+
+static char *grab_stream(FILE *file)
+{
+	size_t max, ret, size = 0;
 	char *buffer;
 
-	max = 16384;
-	buffer = malloc(max+1);
-	while ((ret = read(fd, buffer + size, max - size)) > 0) {
+	max = BUFSIZ;
+	buffer = malloc(max);
+	while ((ret = fread_noeintr(buffer + size, 1, max - size, file)) > 0) {
 		size += ret;
 		if (size == max)
 			buffer = realloc(buffer, max *= 2);
 	}
-	if (ret < 0)
+	size += ret;
+	if (ferror(file))
 		err(1, "reading from command");
 	buffer[size] = '\0';
 	return buffer;
@@ -388,43 +404,25 @@ static char *grab_fd(int fd)
 
 static char *run(const char *cmd, int *exitstatus)
 {
-	pid_t pid;
-	int p[2];
+	static const char redir[] = " 2>&1";
+	size_t cmdlen;
+	char *cmdredir;
+	FILE *cmdout;
 	char *ret;
-	int status;
 
-	if (pipe(p) != 0)
-		err(1, "creating pipe");
+	cmdlen = strlen(cmd);
+	cmdredir = malloc(cmdlen + sizeof(redir));
+	memcpy(cmdredir, cmd, cmdlen);
+	memcpy(cmdredir + cmdlen, redir, sizeof(redir));
 
-	pid = fork();
-	if (pid == -1)
-		err(1, "forking");
+	cmdout = popen(cmdredir, "r");
+	if (!cmdout)
+		err(1, "popen \"%s\"", cmdredir);
 
-	if (pid == 0) {
-		if (dup2(p[1], STDOUT_FILENO) != STDOUT_FILENO
-		    || dup2(p[1], STDERR_FILENO) != STDERR_FILENO
-		    || close(p[0]) != 0
-		    || close(STDIN_FILENO) != 0
-		    || open("/dev/null", O_RDONLY) != STDIN_FILENO)
-			exit(128);
+	free(cmdredir);
 
-		status = system(cmd);
-		if (WIFEXITED(status))
-			exit(WEXITSTATUS(status));
-		/* Here's a hint... */
-		exit(128 + WTERMSIG(status));
-	}
-
-	close(p[1]);
-	ret = grab_fd(p[0]);
-	/* This shouldn't fail... */
-	if (waitpid(pid, &status, 0) != pid)
-		err(1, "Failed to wait for child");
-	close(p[0]);
-	if (WIFEXITED(status))
-		*exitstatus = WEXITSTATUS(status);
-	else
-		*exitstatus = -WTERMSIG(status);
+	ret = grab_stream(cmdout);
+	*exitstatus = pclose(cmdout);
 	return ret;
 }
 
