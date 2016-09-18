@@ -44,6 +44,12 @@
 #define OUTPUT_FILE "configurator.out"
 #define INPUT_FILE "configuratortest.c"
 
+#ifdef _WIN32
+#define DIR_SEP   "\\"
+#else
+#define DIR_SEP   "/"
+#endif
+
 static const char *progname = "";
 static int verbose;
 
@@ -632,7 +638,7 @@ static bool run_test(const char *cmd, struct test *test)
 		free(output);
 		/* We run INSIDE_MAIN tests for sanity checking. */
 		if ((test->style & EXECUTE) || (test->style & INSIDE_MAIN)) {
-			output = run("./" OUTPUT_FILE, &status);
+			output = run("." DIR_SEP OUTPUT_FILE, &status);
 			if (!(test->style & EXECUTE) && status != 0)
 				errx(1, "Test for %s failed with %i:\n%s",
 				     test->name, status, output);
