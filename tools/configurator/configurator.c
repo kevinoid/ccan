@@ -3,6 +3,9 @@
  *
  * Copyright 2011 Rusty Russell <rusty@rustcorp.com.au>.  MIT license.
  *
+ * err, errx, verr, verrx, vwarn, vwarnx functions from musl libc
+ * Copyright 2005-2013 Rich Felker.  MIT license.
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -25,9 +28,9 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <err.h>
 #include <string.h>
 
 #ifdef _MSC_VER
@@ -41,6 +44,7 @@
 #define OUTPUT_FILE "configurator.out"
 #define INPUT_FILE "configuratortest.c"
 
+static const char *progname = "";
 static int verbose;
 
 enum test_style {
@@ -370,6 +374,51 @@ static struct test tests[] = {
 	},
 };
 
+static void vwarn(const char *fmt, va_list ap)
+{
+	fprintf (stderr, "%s: ", progname);
+	if (fmt) {
+		vfprintf(stderr, fmt, ap);
+		fputs (": ", stderr);
+	}
+	perror(0);
+}
+
+static void vwarnx(const char *fmt, va_list ap)
+{
+	fprintf (stderr, "%s: ", progname);
+	if (fmt) vfprintf(stderr, fmt, ap);
+	putc('\n', stderr);
+}
+
+static void verr(int status, const char *fmt, va_list ap)
+{
+	vwarn(fmt, ap);
+	exit(status);
+}
+
+static void verrx(int status, const char *fmt, va_list ap)
+{
+	vwarnx(fmt, ap);
+	exit(status);
+}
+
+static void err(int status, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	verr(status, fmt, ap);
+	va_end(ap);
+}
+
+static void errx(int status, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	verrx(status, fmt, ap);
+	va_end(ap);
+}
+
 static size_t fread_noeintr(void *restrict ptr, size_t size,
 		size_t nitems, FILE *restrict stream)
 {
@@ -609,6 +658,9 @@ int main(int argc, const char *argv[])
 	unsigned int i;
 	const char *default_args[]
 		= { "", DEFAULT_COMPILER, DEFAULT_FLAGS, NULL };
+
+	if (argc > 0)
+		progname = argv[0];
 
 	if (argc > 1) {
 		if (strcmp(argv[1], "--help") == 0) {
