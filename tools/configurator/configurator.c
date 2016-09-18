@@ -438,6 +438,42 @@ static size_t fread_noeintr(void *restrict ptr, size_t size,
 	return ret;
 }
 
+static size_t fwrite_noeintr(const void *restrict ptr, size_t size,
+		size_t nitems, FILE *restrict stream)
+{
+	size_t ret;
+
+	do {
+		errno = 0;
+		ret = fwrite(ptr, size, nitems, stream);
+	} while (ret == 0 && errno == EINTR);
+
+	return ret;
+}
+
+static size_t fcopy(FILE *fsrc, FILE *fdst)
+{
+	char buffer[BUFSIZ];
+	size_t copied = 0, rsize;
+
+	while ((rsize = fread_noeintr(buffer, 1, BUFSIZ, fsrc)) > 0) {
+		size_t wsize, wtotal = 0;
+
+		while (wtotal < rsize &&
+		       ((wsize = fwrite_noeintr(buffer + wtotal, 1,
+						rsize - wtotal, fdst)) > 0)) {
+			wtotal += wsize;
+		}
+
+		if (wtotal < rsize)
+			break;
+
+		copied += wtotal;
+	}
+
+	return copied;
+}
+
 static char *grab_stream(FILE *file)
 {
 	size_t max, ret, size = 0;
@@ -562,7 +598,7 @@ static bool run_test(const char *cmd, struct test *test)
 		}
 	}
 
-	outf = fopen(INPUT_FILE, "w");
+	outf = fopen(INPUT_FILE, verbose > 1 ? "w+" : "w");
 	if (!outf)
 		err(1, "creating %s", INPUT_FILE);
 
@@ -593,11 +629,13 @@ static bool run_test(const char *cmd, struct test *test)
 		abort();
 
 	}
-	fclose(outf);
 
-	if (verbose > 1)
-		if (system("cat " INPUT_FILE) == -1)
-			;
+	if (verbose > 1) {
+		fseek(outf, 0, SEEK_SET);
+		fcopy(outf, stdout);
+	}
+
+	fclose(outf);
 
 	newcmd = strdup(cmd);
 
