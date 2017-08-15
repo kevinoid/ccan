@@ -40,51 +40,56 @@ static void killme(int sig UNNEEDED)
 	kill(-getpid(), SIGKILL);
 }
 
+static void start_command(struct command *c)
+{
+	int p[2];
+
+	if (pipe(p) != 0)
+		err(1, "Pipe failed");
+	c->pid = fork();
+	if (c->pid == -1)
+		err(1, "Fork failed");
+	if (c->pid == 0) {
+		struct itimerval itim;
+
+		if (dup2(p[1], STDOUT_FILENO) != STDOUT_FILENO
+		    || dup2(p[1], STDERR_FILENO) != STDERR_FILENO
+		    || close(p[0]) != 0
+		    || close(STDIN_FILENO) != 0
+		    || open("/dev/null", O_RDONLY) != STDIN_FILENO)
+			exit(128);
+
+		signal(SIGALRM, killme);
+		itim.it_interval.tv_sec = itim.it_interval.tv_usec = 0;
+		itim.it_value = timespec_to_timeval(time_from_msec(c->time_ms).ts);
+		setitimer(ITIMER_REAL, &itim, NULL);
+
+		c->status = system(c->command);
+		if (WIFEXITED(c->status))
+			exit(WEXITSTATUS(c->status));
+		/* Here's a hint... */
+		exit(128 + WTERMSIG(c->status));
+	}
+
+	if (tools_verbose)
+		printf("Running async: %s => %i\n", c->command, c->pid);
+
+	close(p[1]);
+	c->output_fd = p[0];
+	c->task = lbalance_task_new(lb);
+}
+
 static void run_more(void)
 {
 	struct command *c;
 
 	while (num_running < lbalance_target(lb)) {
-		int p[2];
-
 		c = tlist_top(&pending, list);
 		if (!c)
 			break;
 
 		fflush(stdout);
-		if (pipe(p) != 0)
-			err(1, "Pipe failed");
-		c->pid = fork();
-		if (c->pid == -1)
-			err(1, "Fork failed");
-		if (c->pid == 0) {
-			struct itimerval itim;
-
-			if (dup2(p[1], STDOUT_FILENO) != STDOUT_FILENO
-			    || dup2(p[1], STDERR_FILENO) != STDERR_FILENO
-			    || close(p[0]) != 0
-			    || close(STDIN_FILENO) != 0
-			    || open("/dev/null", O_RDONLY) != STDIN_FILENO)
-				exit(128);
-
-			signal(SIGALRM, killme);
-			itim.it_interval.tv_sec = itim.it_interval.tv_usec = 0;
-			itim.it_value = timespec_to_timeval(time_from_msec(c->time_ms).ts);
-			setitimer(ITIMER_REAL, &itim, NULL);
-
-			c->status = system(c->command);
-			if (WIFEXITED(c->status))
-				exit(WEXITSTATUS(c->status));
-			/* Here's a hint... */
-			exit(128 + WTERMSIG(c->status));
-		}
-
-		if (tools_verbose)
-			printf("Running async: %s => %i\n", c->command, c->pid);
-
-		close(p[1]);
-		c->output_fd = p[0];
-		c->task = lbalance_task_new(lb);
+		start_command(c);
 		tlist_del_from(&pending, c, list);
 		tlist_add_tail(&running, c, list);
 		num_running++;
