@@ -1,9 +1,6 @@
 #include "ccanlint.h"
 #include "../tools.h"
 #include <sys/types.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -18,6 +15,9 @@
 # define VC_EXTRALEAN 1
 # include <windows.h>
 #else
+# include <sys/resource.h>
+# include <sys/time.h>
+# include <sys/wait.h>
 # include <unistd.h>
 #endif
 
