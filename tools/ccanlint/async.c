@@ -11,7 +11,7 @@
 #include <ccan/tlist/tlist.h>
 #include <ccan/time/time.h>
 
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 # define VC_EXTRALEAN 1
 # include <windows.h>
 #else
@@ -31,7 +31,7 @@ static struct tlist_command done = TLIST_INIT(done);
 struct command {
 	struct list_node list;
 	char *command;
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 	HANDLE hProcess;
 #endif
 	pid_t pid;
@@ -49,7 +49,7 @@ static void killme(int sig UNNEEDED)
 	kill(-getpid(), SIGKILL);
 }
 
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 /** vwarn(3) equivalent for Windows API errors. */
 static void winvwarn(const char *fmt, va_list ap)
 {
@@ -91,7 +91,7 @@ static void winerr(int eval, const char *fmt, ...)
 
 static void start_command(struct command *c)
 {
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 	HANDLE inpipe[2];
 	HANDLE outpipe[2];
 	PROCESS_INFORMATION pi;
@@ -205,7 +205,7 @@ static void run_more(void)
 static void destroy_command(struct command *command)
 {
 	if (!command->done && command->pid) {
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 		TerminateProcess(command->hProcess, 1);
 #else
 		kill(-command->pid, SIGKILL);
@@ -275,7 +275,7 @@ static void reap_output(void)
 			c->output[old_len + len - 1] = '\0';
 			if (len == 0) {
 				struct rusage ru;
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 				WaitForSingleObject(c->hProcess, INFINITE);
 				GetExitCodeProcess(c->hProcess, &c->status);
 				CloseHandle(c->hProcess);
@@ -320,7 +320,7 @@ void *collect_command(bool *ok, char **output)
 		run_more();
 	}
 
-#ifdef HAVE_WINDOWS_H
+#if HAVE_WINDOWS_H
 	*ok = (c->status == 0);
 #else
 	*ok = (WIFEXITED(c->status) && WEXITSTATUS(c->status) == 0);
