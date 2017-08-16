@@ -8,12 +8,18 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <err.h>
 #include <assert.h>
 #include <ccan/lbalance/lbalance.h>
 #include <ccan/tlist/tlist.h>
 #include <ccan/time/time.h>
+
+#ifdef HAVE_WINDOWS_H
+# define VC_EXTRALEAN 1
+# include <windows.h>
+#else
+# include <unistd.h>
+#endif
 
 static struct lbalance *lb;
 TLIST_TYPE(command, struct command);
@@ -25,6 +31,9 @@ static struct tlist_command done = TLIST_INIT(done);
 struct command {
 	struct list_node list;
 	char *command;
+#ifdef HAVE_WINDOWS_H
+	HANDLE hProcess;
+#endif
 	pid_t pid;
 	int output_fd;
 	unsigned int time_ms;
@@ -40,8 +49,103 @@ static void killme(int sig UNNEEDED)
 	kill(-getpid(), SIGKILL);
 }
 
+#ifdef HAVE_WINDOWS_H
+/** vwarn(3) equivalent for Windows API errors. */
+static void winvwarn(const char *fmt, va_list ap)
+{
+	LPWSTR lpMsgBuf;
+	DWORD dwLastError;
+
+	dwLastError = GetLastError();
+
+	// TODO: Process name. Worth linking to psapi.lib?
+	//       https://stackoverflow.com/a/4570213
+	//fprintf(stderr, "%s: ", progname);
+	vfprintf(stderr, fmt, ap);
+	fputs(": ", stderr);
+	FormatMessageW(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER |
+			FORMAT_MESSAGE_FROM_SYSTEM |
+			FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL,
+		dwLastError,
+		0,
+		(LPWSTR) &lpMsgBuf,
+		0,
+		NULL);
+	fwputws(lpMsgBuf, stderr);
+}
+
+/** err(3) equivalent for Windows API errors. */
+static void winerr(int eval, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	winvwarn(fmt, ap);
+	va_end(ap);
+
+	exit(eval);
+}
+#endif
+
 static void start_command(struct command *c)
 {
+#ifdef HAVE_WINDOWS_H
+	HANDLE inpipe[2];
+	HANDLE outpipe[2];
+	PROCESS_INFORMATION pi;
+	SECURITY_ATTRIBUTES sa = { 0 };
+	STARTUPINFO si = { 0 };
+
+	sa.nLength = sizeof sa;
+	sa.bInheritHandle = TRUE;
+
+	// Mimic /dev/null stdin with a closed pipe
+	if (!CreatePipe(&inpipe[0], &inpipe[1], &sa, 0))
+		winerr(1, "CreatePipe for stdin failed");
+	if (!CloseHandle(inpipe[1]))
+		winerr(1, "CloseHandle on stdin pipe failed");
+
+	if (!CreatePipe(&outpipe[0], &outpipe[1], &sa, 0))
+		winerr(1, "CreatePipe for stdout failed");
+	if (!SetHandleInformation(outpipe[0], HANDLE_FLAG_INHERIT, 0))
+		winerr(1, "SetHandleInformation for stdout failed");
+
+	si.cb = sizeof si;
+	si.dwFlags = STARTF_USESTDHANDLES;
+	si.hStdInput = inpipe[0];
+	si.hStdOutput = outpipe[1];
+	si.hStdError = outpipe[1];
+
+	if (!CreateProcessA(
+			NULL,
+			c->command,
+			NULL,
+			NULL,
+			FALSE,
+			0,
+			NULL,
+			NULL,
+			&si,
+			&pi)) {
+		winerr(1, "CreateProcess failed");
+	}
+	c->hProcess = pi.hProcess;
+	c->pid = pi.dwProcessId;
+
+	if (!CloseHandle(pi.hThread)) {
+		winvwarn(1, "CloseHandle child thread");
+	}
+	if (!CloseHandle(inpipe[0]) || !CloseHandle(outpipe[1])) {
+		winerr(1, "CloseHandle child pipes");
+	}
+
+	// Note:  Closing file descriptor will close handle.
+	// https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/open-osfhandle
+	c->output_fd = _open_osfhandle((intptr_t)outpipe[1], _O_RDONLY);
+
+#else
 	int p[2];
 
 	if (pipe(p) != 0)
@@ -71,11 +175,13 @@ static void start_command(struct command *c)
 		exit(128 + WTERMSIG(c->status));
 	}
 
+	close(p[1]);
+	c->output_fd = p[0];
+#endif
+
 	if (tools_verbose)
 		printf("Running async: %s => %i\n", c->command, c->pid);
 
-	close(p[1]);
-	c->output_fd = p[0];
 	c->task = lbalance_task_new(lb);
 }
 
@@ -99,7 +205,12 @@ static void run_more(void)
 static void destroy_command(struct command *command)
 {
 	if (!command->done && command->pid) {
+#ifdef HAVE_WINDOWS_H
+		TerminateProcess(command->hProcess, 1);
+#else
 		kill(-command->pid, SIGKILL);
+#endif
+
 		close(command->output_fd);
 		num_running--;
 	}
@@ -164,6 +275,16 @@ static void reap_output(void)
 			c->output[old_len + len - 1] = '\0';
 			if (len == 0) {
 				struct rusage ru;
+#ifdef HAVE_WINDOWS_H
+				WaitForSingleObject(c->hProcess, INFINITE);
+				GetExitCodeProcess(c->hProcess, &c->status);
+				CloseHandle(c->hProcess);
+				if (tools_verbose)
+					printf("Finished async %i: "
+							"exit status %u\n",
+					       c->pid,
+					       c->status);
+#else
 				wait4(c->pid, &c->status, 0, &ru);
 				if (tools_verbose)
 					printf("Finished async %i: %s %u\n",
@@ -174,6 +295,7 @@ static void reap_output(void)
 					       WIFEXITED(c->status)
 					       ? WEXITSTATUS(c->status)
 					       : WTERMSIG(c->status));
+#endif
 				lbalance_task_free(c->task, &ru);
 				c->task = NULL;
 				c->done = true;
@@ -198,7 +320,11 @@ void *collect_command(bool *ok, char **output)
 		run_more();
 	}
 
+#ifdef HAVE_WINDOWS_H
+	*ok = (c->status == 0);
+#else
 	*ok = (WIFEXITED(c->status) && WEXITSTATUS(c->status) == 0);
+#endif
 	ctx = c->ctx;
 	*output = tal_steal(ctx, c->output);
 	tal_free(c);
