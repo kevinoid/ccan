@@ -5,8 +5,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
-#include <err.h>
 #include <assert.h>
+#include <ccan/err/err.h>
 #include <ccan/lbalance/lbalance.h>
 #include <ccan/tlist/tlist.h>
 #include <ccan/time/time.h>
