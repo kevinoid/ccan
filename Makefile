@@ -9,7 +9,7 @@ all::
 # Our flags for building
 WARN_CFLAGS := -Wall -Wstrict-prototypes -Wold-style-definition -Wundef \
  -Wmissing-prototypes -Wmissing-declarations -Wpointer-arith -Wwrite-strings
-DEP_CFLAGS = -MMD -MP -MF$(@:%=%.d) -MT$@
+#DEP_CFLAGS = -MMD -MP -MF$(@:%=%.d) -MT$@
 CCAN_CFLAGS := -g3 -ggdb $(WARN_CFLAGS) -DCCAN_STR_DEBUG=1 -I. $(CFLAGS)
 CFLAGS_FORCE_C_SOURCE := -x c
 
@@ -25,7 +25,7 @@ MODULES:= $(filter-out $(EXCLUDE:%=ccan/%), $(ALL_MODULES))
 # Sources are C files in each module, objects the resulting .o files
 SRCS := $(wildcard $(MODULES:%=%/*.c))
 OBJS := $(SRCS:%.c=%.o)
-DEPS := $(OBJS:%=%.d)
+#DEPS := $(OBJS:%=%.d)
 
 # We build all object files using our CCAN_CFLAGS, after config.h
 %.o : %.c config.h
@@ -45,7 +45,7 @@ config.h: $(CONFIGURATOR) Makefile
 # Tools
 TOOLS := tools/ccan_depends tools/doc_extract tools/namespacize tools/modfiles
 TOOLS_SRCS := $(filter-out $(TOOLS:%=%.c), $(wildcard tools/*.c))
-TOOLS_DEPS := $(TOOLS_SRCS:%.c=%.d) $(TOOLS:%=%.d)
+#TOOLS_DEPS := $(TOOLS_SRCS:%.c=%.d) $(TOOLS:%=%.d)
 TOOLS_CCAN_MODULES := asort err foreach hash htable list noerr opt rbuf \
     read_write_all str take tal tal/grab_file tal/link tal/path tal/str time
 TOOLS_CCAN_SRCS := $(wildcard $(TOOLS_CCAN_MODULES:%=ccan/%/*.c))
@@ -58,7 +58,7 @@ LINT := tools/ccanlint/ccanlint
 LINT_OPTS.ok := -s
 LINT_OPTS.fast-ok := -s -x tests_pass_valgrind -x tests_compile_coverage
 LINT_SRCS := $(filter-out $(LINT).c, $(wildcard tools/ccanlint/*.c tools/ccanlint/tests/*.c))
-LINT_DEPS := $(LINT_SRCS:%.c=%.d) $(LINT).d
+#LINT_DEPS := $(LINT_SRCS:%.c=%.d) $(LINT).d
 LINT_CCAN_MODULES := asort autodata dgraph ilog lbalance ptr_valid strmap
 LINT_CCAN_SRCS := $(wildcard $(LINT_CCAN_MODULES:%=ccan/%/*.c))
 LINT_OBJS := $(LINT_SRCS:%.c=%.o) $(LINT_CCAN_SRCS:%.c=%.o) $(TOOLS_OBJS)
@@ -71,7 +71,7 @@ $(LINT): $(LINT).c $(LINT_OBJS)
 # We generate dependencies for tests into a .d file
 %/.d: %/info tools/gen_deps.sh tools/ccan_depends
 	$(PRE)tools/gen_deps.sh $* > $@ || rm -f $@
-TEST_DEPS := $(MODULES:%=%/.d)
+#TEST_DEPS := $(MODULES:%=%/.d)
 
 # We produce .ok files when the tests succeed
 %.ok: $(LINT) %info
@@ -83,9 +83,9 @@ TEST_DEPS := $(MODULES:%=%/.d)
 check: $(MODULES:%=%/.ok)
 fastcheck: $(MODULES:%=%/.fast-ok)
 
-ifeq ($(strip $(filter clean config.h, $(MAKECMDGOALS))),)
--include $(DEPS) $(LINT_DEPS) $(TOOLS_DEPS) $(TEST_DEPS)
-endif
+#ifeq ($(strip $(filter clean config.h, $(MAKECMDGOALS))),)
+#-include $(DEPS) $(LINT_DEPS) $(TOOLS_DEPS) $(TEST_DEPS)
+#endif
 
 # Default target: object files, info files and tools
 all:: $(OBJS) $(ALL_INFOS) $(CONFIGURATOR) $(LINT) $(TOOLS)
